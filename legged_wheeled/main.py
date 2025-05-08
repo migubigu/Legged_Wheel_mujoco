@@ -43,7 +43,7 @@ parser.add_argument('--seed', type=int, default=123456, metavar='N',
 parser.add_argument('--batch_size', type=int, default=256, metavar='N',
                     help='batch size (default: 256)')
 # 训练的最大步数
-parser.add_argument('--num_steps', type=int, default=10000001, metavar='N',
+parser.add_argument('--num_steps', type=int, default=10000000, metavar='N',
                     help='maximum number of steps (default: 1000000)')
 # 神经网络隐藏层的大小
 parser.add_argument('--hidden_size', type=int, default=256, metavar='N',
@@ -52,20 +52,23 @@ parser.add_argument('--hidden_size', type=int, default=256, metavar='N',
 parser.add_argument('--updates_per_step', type=int, default=1, metavar='N',
                     help='model updates per simulator step (default: 1)')
 # 训练初期随机采样步数
-parser.add_argument('--start_steps', type=int, default=5000, metavar='N',
-                    help='Steps sampling random actions (default: 5000)')
+parser.add_argument('--start_steps', type=int, default=10000, metavar='N',
+                    help='Steps sampling random actions (default: 10000)')
 # 目标网络的更新间隔
 parser.add_argument('--target_update_interval', type=int, default=1, metavar='N',
                     help='Value target update per no. of updates per step (default: 1)')
 # 经验池大小
-parser.add_argument('--replay_size', type=int, default=100000000, metavar='N',
-                    help='size of replay buffer (default: 1000000000)')
+parser.add_argument('--replay_size', type=int, default=10000000, metavar='N',
+                    help='size of replay buffer (default: 100000000)')
 # 是否使用GPU计算
 parser.add_argument('--cuda', action="store_true", default=False,
                     help='run on CUDA (default: True)')
 # 选择是否遥控
 parser.add_argument('--control_if', type=bool, default=False,
                     help='control if use gamepad (default: False)')
+
+parser.add_argument('--save_steps', type=int, default=20, metavar='N',
+                    help='save_steps')
 args = parser.parse_args()
 
 # Environment
@@ -101,10 +104,11 @@ average_reward = 0
 again = 0
 average_rewards_list = []
 average_rewards_list_all = []
+save_list = list(range(1, args.save_steps+1))
 end = False
 k = 1
 
-while episode_steps < 6000 or average_reward < 30 or not end:
+while episode_steps < 6000 or average_reward < 3 or not end:
     episode_reward = 0
     episode_steps = 0
     done = False
@@ -144,16 +148,18 @@ while episode_steps < 6000 or average_reward < 30 or not end:
         state = next_state
 
     # 每次训练后运行
-    if total_numsteps % (args.num_steps / 100) == 0:
+
+    if total_numsteps // int(args.num_steps / args.save_steps) in save_list:
         agent.save_model(args.env_name)
 
-        average_rewards_list.append(np.mean(average_rewards_list_all[-99:]))
+        average_rewards_list.append(np.mean(average_rewards_list_all[-20:]))
         if len(average_rewards_list) > 4:
             std_average_reward = np.std(average_rewards_list[-3:])
-            if std_average_reward < 1:
+            if std_average_reward < 0.1 and average_rewards_list[-1] >3:
                 print("average reward is stable, stop training")
                 end = True
                 break
+        save_list.pop(0)
 
     average_reward = episode_reward / episode_steps
     average_rewards_list_all.append(average_reward)
@@ -163,7 +169,7 @@ while episode_steps < 6000 or average_reward < 30 or not end:
         break
 
     writer.add_scalar('reward/train', episode_reward, k)
-    print("Episode: {}, total numsteps: {}, episode steps: {}, reward: {}".format(k, total_numsteps, episode_steps, round(episode_reward, 2)))
+    print("Episode: {}, total numsteps: {}, episode steps: {}, reward: {}, average reward: {}".format(k, total_numsteps, episode_steps, round(episode_reward, 2), round(average_reward, 2)))
     k += 1
 
 agent.save_model(args.env_name)

@@ -13,7 +13,7 @@
     <position gear="10" ctrllimited="true" kp="5"/>
     <joint limited="true" frictionloss="0.5" damping="45" armature="0.1"/>
   </default>
-
+  
   <asset>
     <!--定义Agent结构网络的分组元素-->
     <mesh name="base_link" file="chassis/base_link.STL"/>
@@ -24,17 +24,20 @@
     <mesh name="right_shin" file="chassis/right_shin.STL"/>
     <mesh name="right_wheel" file="chassis/right_wheel.STL"/>
 
-    <!-- <mesh name="stair1" file="stair/stair1.STL"/>
+    <mesh name="stair1" file="stair/stair1.STL"/>
     <mesh name="stair2" file="stair/stair2.STL"/>
     <mesh name="stair3" file="stair/stair3.STL"/>
     <mesh name="stair4" file="stair/stair4.STL"/>
-    <mesh name="stair5" file="stair/stair5.STL"/> -->
+    <mesh name="stair5" file="stair/stair5.STL"/>
   </asset>
 
   <asset>
     <!--grid定义纹理、材料-->
+    <texture type="skybox" file="./png/desert.png" gridsize="3 4" gridlayout=".U..LFRB.D.." />
     <texture name="grid" type="2d" builtin="checker" rgb1=".9 .8 .7" rgb2=".4 .4 .4" width="300" height="300" mark="edge" markrgb=".2 .3 .4"/>
     <material name="grid" texture="grid" texrepeat="2 2" texuniform="true" reflectance=".2"/>
+    <!--size中的参数分别为x，y延伸长度，z方向最高值，分辨率-->
+    <hfield name="terrain" file="D:/rbot_projects/legged_wheeled/envs/asset/png/terrain.png" size="25 25 .4 0.1" />
   </asset>
 
   <visual>
@@ -55,8 +58,9 @@
     <!--定义地面几何体，各种箱子-->
     <!-- <geom name="ground" type="plane" pos="0 0 0.18" size="20 20 0.1" material="grid" solimp=".9 .95 .001" solref='-10000 -1000'/> -->
     <geom name="floor" pos='0 0 0.18' size="0 0 0.03" type="plane" material="grid" conaffinity="0"  solimp=".9 .95 .001"/>
-    <!-- <geom name="box2" pos="-2 1 0.18" size="0.8 1 0.03" type="box" rgba="1 1 1 1" euler="0 0 0" conaffinity="0"/>
-    <geom name="box3" pos="-3.3 1.5 0.18" size="0.5 0.5 0.03" type="box" rgba="1 0.6 0.8 1" euler="0 0 0" conaffinity="0"/>
+    <geom type="hfield" hfield="terrain" pos="0 0 0.18" size="25 25 .4" />
+    <geom name="box1" pos="0 0 0.0" size="0.8 0.8 0.4" type="box" rgba="0. 0.8 0. 1" euler="0 0 0" conaffinity="0"/>
+    <!-- <geom name="box3" pos="-3.3 1.5 0.18" size="0.5 0.5 0.03" type="box" rgba="1 0.6 0.8 1" euler="0 0 0" conaffinity="0"/>
     <geom name="box3r" pos="-3.4 0.5 0.15" size="0.6 0.5 0.03" type="box" rgba="1 0.6 0.8 1" euler="0 -0.05 0" conaffinity="0"/>
     <geom name="box4" pos="-4.4 1.5 0.18" size="0.6 0.5 0.03" type="box" rgba="1 1 1 1" euler="0 0 0" conaffinity="0"/>
     <geom name="box4r" pos="-4.8 0.5 0.16" size="0.8 0.5 0.03" type="box" rgba="1 0.6 0.8 1" euler="0 0.05 0" conaffinity="0"/>
@@ -84,7 +88,7 @@
 
     <!-- ======= ROBOT ======= -->
     <!--定义Agent的初始坐标和欧拉角-->
-    <body name="base_link" pos="0 0 0.43" euler="0 0 0">
+    <body name="base_link" pos="0 0 0.65" euler="0 0 0">
       <!--定义Agent的惯性坐标系的位姿和质量-->
       <inertial pos="0.018885 0.00062964 0.06018" quat="-0.064773 0.618315 0.0968439 0.777246" mass="4.6733" diaginertia="0.054592 0.0348635 0.0323885"/>
       <joint name="floating_base" type="free" limited="false" frictionloss="0.001" damping="0.01" armature="0."/>

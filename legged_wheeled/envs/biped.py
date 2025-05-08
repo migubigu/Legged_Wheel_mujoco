@@ -23,7 +23,7 @@ class BipedEnv(mujoco_env.MujocoEnv, utils.EzPickle):
         xml_file=os.path.join(os.path.join(os.path.dirname(__file__),
                                 'asset', "Legged_wheel3.xml")),
         healthy_reward=1.0,
-        healthy_z_range=0.20,
+        healthy_z_range=0.05,
         reset_noise_scale=0.1,
     ):
         # 将__init__方法传递给父类,EzPickle是用来将自定义环境中的参数数列化的方法
@@ -53,10 +53,10 @@ class BipedEnv(mujoco_env.MujocoEnv, utils.EzPickle):
         self.device = torch.device("cuda" if self.cuda_if else "cpu")
         self.commands = torch.zeros(2).to(self.device)             # 控制指令，线速度，旋转角速度
         self.lin_vel_x = [-1.2, 1.2]
-        self.ang_vel_z = [-0.7, 0.7]
+        self.ang_vel_z = [-1.0, 1.0]
         self.min_stand = 0.1
-        self.target_height = 0.42
-        self.shin_height_min = 0.16
+        self.target_height = 0.125
+        self.shin_height_min = 0.06
         self.ang_range = np.pi / 6
 
     # 获取指令
@@ -78,23 +78,19 @@ class BipedEnv(mujoco_env.MujocoEnv, utils.EzPickle):
             else:
                 self.commands[0] += random.uniform(-0.1, 0.1)
                 self.commands[1] += random.uniform(-0.05, 0.05)
-                if self.commands[0] < self.lin_vel_x[0]:
-                    self.commands[0] = self.lin_vel_x[0]
-                elif self.commands[0] > self.lin_vel_x[1]:
-                    self.commands[0] = self.lin_vel_x[1]
-                if self.commands[1] < self.ang_vel_z[0]:
-                    self.commands[1] = self.ang_vel_z[0]
-                elif self.commands[1] > self.ang_vel_z[1]:
-                    self.commands[1] = self.ang_vel_z[1]
+                self.commands[0] = np.clip(self.commands[0], self.lin_vel_x[0], self.lin_vel_x[1])
+                self.commands[1] = np.clip(self.commands[1], self.ang_vel_z[0], self.ang_vel_z[1])
         self.commands = self.commands.to(self.device)  
 
 
     @property  # 是否倾倒（通过质心到达最低健康高度、碰到大腿以上作为是否倾倒依据）、get_body_com是MujocoEnv中的一种方法，获取“base_link”的质心位置
     def is_healthy(self):
         min_z = self._healthy_z_range
-        shin_height = min(self.get_body_com("left_shin")[2], self.get_body_com("right_shin")[2])  # 获取小腿的高度
+        # 计算相对高度
+        shin_height = min((self.get_body_com("left_shin")[2]-self.get_body_com("left_wheel")[2]), (self.get_body_com("right_shin")[2]-self.get_body_com("left_wheel")[2]))  # 获取小腿的高度
         ang_yx = self.get_agent_euler()[1:]                  # 对xy轴位姿限制
-        is_healthy = (self.get_body_com("base_link")[2] > min_z) and (not self.bump_base()) and (abs(ang_yx[0]) < self.ang_range) and (min(abs(ang_yx[1]),abs(ang_yx[1] - np.pi),abs(ang_yx[1] + np.pi)) < self.ang_range) and (shin_height > self.shin_height_min)  # 判断是否倾倒
+        # is_healthy = ((self.get_body_com("base_link")[2]-self.get_body_com("left_wheel")[2]) > min_z) and (not self.bump_base()) and (abs(ang_yx[0]) < self.ang_range) and (min(abs(ang_yx[1]),abs(ang_yx[1] - np.pi),abs(ang_yx[1] + np.pi)) < self.ang_range) and (shin_height > self.shin_height_min)  # 判断是否倾倒
+        is_healthy = ((self.get_body_com("base_link")[2]-self.get_body_com("left_wheel")[2]) > min_z) and (not self.bump_base()) and (abs(ang_yx[0]) < self.ang_range) and (min(abs(ang_yx[1]),abs(ang_yx[1] - np.pi),abs(ang_yx[1] + np.pi)) < self.ang_range)
         return is_healthy
 
     @property #判断是否结束
@@ -141,17 +137,12 @@ class BipedEnv(mujoco_env.MujocoEnv, utils.EzPickle):
     def step(self, action):
         self.do_simulation(action, self.frame_skip)                             # 更新仿真
         self.action = action
-        if (int((self.sim.data.time/0.002)+0.5)) % (100) == 0:                   # 更新控制指令
+        if (int((self.sim.data.time/0.002)+0.5)) % (50) == 0:                   # 更新控制指令
             self._resample_commands()
 
         observation = self._get_obs()                                           # 获取观察值
         self.lin_vel_agent_xyz = torch.tensor(self.vel_agent, dtype=torch.float32).to(self.device)                  # 获取Agent的线速度
-        lin_vel_agent_xy = self.lin_vel_agent_xyz[:2]                                                               # 只取xy平面上的速度
-        yaw_agent = self.get_agent_euler()[0]                                                                   # 获取当前Agent的局部参考系
-        orientation_vector = torch.tensor([torch.cos(yaw_agent),
-                                    torch.sin(yaw_agent)], dtype=torch.float32).to(self.device)
-        
-        self.lin_vel_agent_local = torch.dot(lin_vel_agent_xy, orientation_vector).to(self.device)                                           # 计算在agent参考系下的线速度
+        self.lin_vel_agent_local = self.lin_vel_agent_xyz[0]
         # 计算奖励
         r_vel = self._reward_tracking_vel()  
         r_vel_z = self._reward_lin_vel_z()
@@ -164,7 +155,7 @@ class BipedEnv(mujoco_env.MujocoEnv, utils.EzPickle):
         r_energy = self._reward_energy()
         r_elur = self._reward_base_ang_xy()
         
-        reward = 13*r_vel + r_vel_z*3 + r_torque*2 + r_gravity*2 + r_ang_xy*2 + r_similar_legged*3 + r_stand*1 + self.healthy_reward*6 + r_height*2 + r_energy*1 + r_elur*1                           # 定义奖励函数
+        reward = 1.3*r_vel + r_vel_z*0.2 + r_torque*0.3 + r_gravity*0.3 + r_ang_xy*0.2 + r_similar_legged*0.3 + r_stand*0.08 + self.healthy_reward*0.5 + r_height*0.1 + r_energy*0.2 + r_elur*0.4                           # 定义奖励函数
         done = self.done                        # 只要没死亡就可以一直仿真
 
         info = {}
@@ -178,10 +169,10 @@ class BipedEnv(mujoco_env.MujocoEnv, utils.EzPickle):
         self.position = self.sim.data.qpos.flat.copy() # 身体部位的位置
         self.velocity = self.sim.data.qvel.flat.copy() # 所有关节的线速度
         self.torques = self.sim.data.actuator_force.flat.copy() # 所有关节的扭矩
-
+        # imu传感器获取的数据似乎都是局部坐标系下的
         gyro_id = self.model.sensor_name2id("Body_Gyro")
         vel_id = self.model.sensor_name2id("Body_Vel")
-        acc_id = self.model.sensor_name2id("Body_Acc")
+        pos_id = self.model.sensor_name2id("Body_Pos")
         # 获取Agent上传感器imu的速度、角速度和位姿
         self.vel_agent = self.sim.data.sensordata[self.sim.model.sensor_adr[vel_id]:self.sim.model.sensor_adr[vel_id] + self.sim.model.sensor_dim[vel_id]]
         self.gyro_agent= self.sim.data.sensordata[self.sim.model.sensor_adr[gyro_id]:self.sim.model.sensor_adr[gyro_id] + self.sim.model.sensor_dim[gyro_id]]
@@ -192,7 +183,7 @@ class BipedEnv(mujoco_env.MujocoEnv, utils.EzPickle):
         quat_conj = torch.tensor([self.quat_imu[0], -self.quat_imu[1], -self.quat_imu[2], -self.quat_imu[3]], dtype=torch.float32).to(self.device)
         on = self.quaternion_multiply(self.quat_imu, self.gravity)
         self.gravity_local = self.quaternion_multiply(on, quat_conj)
-        observations = np.concatenate((self.position, self.velocity, self.torques, self.vel_agent, self.gyro_agent, self.gravity_local, self.commands))
+        observations = np.concatenate((self.position[3:], self.velocity, self.torques,self.vel_agent, self.gyro_agent, self.gravity_local, self.commands))
         return observations
 
     # 重置模型
@@ -218,8 +209,8 @@ class BipedEnv(mujoco_env.MujocoEnv, utils.EzPickle):
         lin_vel_error_abs = abs(self.lin_vel_agent_local - self.commands[0])
         ang_vel_error_abs = abs(self.gyro_agent[2] - self.commands[1])
 
-        r_square = torch.exp(-lin_vel_error_square) + torch.exp(-ang_vel_error_square)
-        r_abs = torch.exp(-lin_vel_error_abs * 2) + torch.exp(-ang_vel_error_abs * 2)
+        r_square = torch.exp(-lin_vel_error_square) + 1.2 * torch.exp(-ang_vel_error_square)
+        r_abs = torch.exp(-lin_vel_error_abs * 2) + 1.2 * torch.exp(-ang_vel_error_abs * 2)
         r = torch.where(stand_command, r_square, r_abs)
         return r
     # 惩罚z轴线速度
@@ -251,15 +242,15 @@ class BipedEnv(mujoco_env.MujocoEnv, utils.EzPickle):
         right_leg = torch.tensor(self.position[10:12])
         r = torch.sum(torch.square(left_leg - right_leg))
         return torch.exp(-r)
-    
+
     def _reward_base_height(self):
-        r = torch.square(torch.tensor(self.position[2]) - torch.tensor(self.target_height))
+        r = torch.square(torch.tensor(self.get_body_com("base_link")[2]-self.get_body_com("left_wheel")[2]) - torch.tensor(self.target_height))
         return torch.exp(-r)
     
     def _reward_energy(self):
         r = torch.sum(torch.abs(torch.tensor(self.action)))
         return torch.exp(-r)
-    
+
     def _reward_base_ang_xy(self):
         pitch, roll =self.get_agent_euler()[1:]
         r = torch.square(pitch) + torch.square(roll)
