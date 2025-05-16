@@ -8,6 +8,9 @@ from sac import SAC
 from torch.utils.tensorboard import SummaryWriter
 from replay_memory import ReplayMemory
 import envs.register
+import matplotlib.pyplot as plt
+from utils import rewards_output_pic
+import threading
 #主训练程序
 
 parser = argparse.ArgumentParser(description='PyTorch Soft Actor-Critic Args')
@@ -101,17 +104,35 @@ total_numsteps = 0
 updates = 0
 episode_steps = 0
 average_reward = 0
-again = 0
+curriculum_stage = 0
 average_rewards_list = []
 average_rewards_list_all = []
 save_list = list(range(1, args.save_steps+1))
 end = False
 k = 0
 
+overall_reward_components_sum = {}
+overall_reward_components_average = {}
+
+lock = threading.Lock()
+def rewards_output_pic_thread():
+    plt.figure(dpi=50,figsize=(15,15))
+    global overall_reward_components_average  # 声明全局变量
+    while True:
+        with lock:  # 使用锁保护共享数据
+            local_overall_reward_components_average = overall_reward_components_average.copy()
+
+        rewards_output_pic(local_overall_reward_components_average)
+
+thread = threading.Thread(target=rewards_output_pic_thread, daemon=True)
+
+
 while episode_steps < 10000 or average_reward < 3 or not end:
+    overall_reward_components_sum = {}
     k += 1
     episode_reward = 0
     episode_steps = 0
+    total_info = {}
     done = False
     state = env.reset()
 
@@ -126,7 +147,7 @@ while episode_steps < 10000 or average_reward < 3 or not end:
         #     if k < 500 and k % 10 == 0:
         #         env.render()
         #     elif k % 20 == 0:                       # 之后每20个episode渲染一次
-        env.render()
+        # env.render()
 
         # 如果还未达到经验池大小
         if len(memory) > args.batch_size:
@@ -142,11 +163,15 @@ while episode_steps < 10000 or average_reward < 3 or not end:
                 writer.add_scalar('entropy_temprature/alpha', alpha, updates)
                 updates += 1
 
-        next_state, reward, done, _ = env.step(action) # Step
+        next_state, reward, done, info = env.step(action) # Step
         episode_steps += 1
         total_numsteps += 1
         episode_reward += reward
 
+        if 'rewards' in info and isinstance(info['rewards'], dict):
+            for comp_name, comp_value in info['rewards'].items():
+                # 累加到总和
+                overall_reward_components_sum[comp_name] = overall_reward_components_sum.get(comp_name, 0.0) + comp_value
 
         mask = 1 if episode_steps == env._max_episode_steps else float(not done)
 
@@ -155,12 +180,11 @@ while episode_steps < 10000 or average_reward < 3 or not end:
         state = next_state
 
     # 每次训练后运行
-
     if total_numsteps // int(args.num_steps / args.save_steps) in save_list:
         agent.save_model(args.env_name)
 
         average_rewards_list.append(np.mean(average_rewards_list_all[-5:]))
-        if len(average_rewards_list) > 4:
+        if len(average_rewards_list) > 4 and curriculum_stage == 3:
             std_average_reward = np.std(average_rewards_list[-3:])
             if std_average_reward < 0.1 and average_rewards_list[-1] > 3:
                 print("average reward is stable, stop training")
@@ -170,17 +194,22 @@ while episode_steps < 10000 or average_reward < 3 or not end:
 
     average_reward = episode_reward / episode_steps
     average_rewards_list_all.append(average_reward)
-    if len(average_rewards_list) > 4:
-        env.class_learning(average_rewards_list[-1], k)
+    if len(average_rewards_list) > 1:
+        curriculum_stage = env.class_learning(average_rewards_list[-1], k)
 
-
-    
     if total_numsteps > args.num_steps:
         break
 
     writer.add_scalar('reward/train', episode_reward, k)
     print("Episode: {}, total numsteps: {}, episode steps: {}, reward: {}, average reward: {}".format(k, total_numsteps, episode_steps, round(episode_reward, 2), round(average_reward, 2)))
 
+    for comp_name, comp_value in overall_reward_components_sum.items():
+        if comp_name not in overall_reward_components_average:
+            overall_reward_components_average[comp_name] = []  # 初始化为空列表
+        overall_reward_components_average[comp_name].append(comp_value / episode_steps)
+
+    if k == 1:
+        thread.start()
 
 agent.save_model(args.env_name)
 

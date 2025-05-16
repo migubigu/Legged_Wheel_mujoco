@@ -1,5 +1,7 @@
 import math
 import torch
+import matplotlib.pyplot as plt
+import numpy as np
 #定义函数
 
 def create_log_gaussian(mean, log_std, t):
@@ -36,3 +38,17 @@ def reset_pad():
     }
     command_scale = [1.0, 1.0, 1.0]
     return command_cfg, command_scale
+
+def rewards_output_pic(overall_reward_components_average):
+    x = np.arange(len(overall_reward_components_average["r_healthy"]))
+    plt.clf()
+    subplot_idx = 1 # 初始化子图索引
+    num_rows = 4
+    num_cols = 4
+    for comp_name in overall_reward_components_average.keys():
+        plt.subplot(num_rows, num_cols, subplot_idx)
+        plt.title(comp_name)
+        plt.plot(x, overall_reward_components_average[comp_name])
+        subplot_idx += 1
+    plt.pause(5)
+    plt.ioff()  # 关闭画图的窗口
