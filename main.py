@@ -11,6 +11,8 @@ import envs.register
 import matplotlib.pyplot as plt
 from utils import rewards_output_pic
 import threading
+import os
+import time
 #主训练程序
 
 parser = argparse.ArgumentParser(description='PyTorch Soft Actor-Critic Args')
@@ -64,7 +66,7 @@ parser.add_argument('--target_update_interval', type=int, default=1, metavar='N'
 parser.add_argument('--replay_size', type=int, default=100000000, metavar='N',
                     help='size of replay buffer (default: 100000000)')
 # 是否使用GPU计算
-parser.add_argument('--cuda', action="store_true", default=True,
+parser.add_argument('--cuda', action="store_true", default=False,
                     help='run on CUDA (default: True)')
 # 选择是否遥控
 parser.add_argument('--control_if', type=bool, default=False,
@@ -117,17 +119,28 @@ overall_reward_components_average = {}
 lock = threading.Lock()
 def rewards_output_pic_thread():
     plt.figure(dpi=50,figsize=(15,15))
-    global overall_reward_components_average  # 声明全局变量
+    global overall_reward_components_average ,end  # 声明全局变量
     while True:
         with lock:  # 使用锁保护共享数据
             local_overall_reward_components_average = overall_reward_components_average.copy()
 
         rewards_output_pic(local_overall_reward_components_average)
 
+        if end:
+            plot_output_dir = "./rewards_out.png" # 定义保存目录
+            try:
+                plt.savefig(plot_output_dir)
+                print(f"Plotter: Plot saved to {plot_output_dir}")
+                break
+            except Exception as e:
+                print(f"Plotter: Error saving plot {plot_output_dir}: {e}")
+                break
+
+
 thread = threading.Thread(target=rewards_output_pic_thread, daemon=True)
 
 
-while episode_steps < 10000 or average_reward < 3 or not end:
+while episode_steps < 10000 or average_reward < 5 or not end:
     overall_reward_components_sum = {}
     k += 1
     episode_reward = 0
@@ -186,7 +199,8 @@ while episode_steps < 10000 or average_reward < 3 or not end:
         average_rewards_list.append(np.mean(average_rewards_list_all[-5:]))
         if len(average_rewards_list) > 4 and curriculum_stage == 3:
             std_average_reward = np.std(average_rewards_list[-3:])
-            if std_average_reward < 0.1 and average_rewards_list[-1] > 3:
+            std_step_in_reward = np.std(average_rewards_list_all[-5:])
+            if std_average_reward < 0.1 and average_rewards_list[-1] > 6 and std_step_in_reward < 0.1:
                 print("average reward is stable, stop training")
                 end = True
                 break
@@ -195,7 +209,7 @@ while episode_steps < 10000 or average_reward < 3 or not end:
     average_reward = episode_reward / episode_steps
     average_rewards_list_all.append(average_reward)
     if len(average_rewards_list) > 1:
-        curriculum_stage = env.class_learning(average_rewards_list[-1], k)
+        curriculum_stage = env.class_learning(average_rewards_list_all[-1], k)
 
     if total_numsteps > args.num_steps:
         break
@@ -207,10 +221,15 @@ while episode_steps < 10000 or average_reward < 3 or not end:
         if comp_name not in overall_reward_components_average:
             overall_reward_components_average[comp_name] = []  # 初始化为空列表
         overall_reward_components_average[comp_name].append(comp_value / episode_steps)
+    if "total_average_reward" not in overall_reward_components_average:
+        overall_reward_components_average["total_average_reward"] = []
+    overall_reward_components_average["total_average_reward"].append(episode_reward / episode_steps)
 
     if k == 1:
         thread.start()
 
 agent.save_model(args.env_name)
+time.sleep(10)
 
+writer.close()
 env.close()

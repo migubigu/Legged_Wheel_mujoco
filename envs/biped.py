@@ -64,10 +64,11 @@ class BipedEnv(mujoco_env.MujocoEnv, utils.EzPickle):
         # 课程学习参数
         self.curriculum_stage = 0
         self.max_curriculum_stage = 3 # 例如，0, 1, 2, 3 四个阶段
-        self.stage_reward_thresholds = [3.0, 3.5, 4.2] # 提升到下一阶段所需的平均奖励阈值 (需要根据奖励函数实际调整)
+        self.stage_reward_thresholds = [3.5, 4.0, 4.5] # 提升到下一阶段所需的平均奖励阈值 (需要根据奖励函数实际调整)
         self.stage_episodes_stable = 10 # 需要连续多少个episode满足阈值才能升级
         self.stable_episode_count = 0
         self.command_step = 500
+        self.max_r_vel = 0.4
 
     # 获取指令
     def control_input(self,commands_in=None):
@@ -208,23 +209,28 @@ class BipedEnv(mujoco_env.MujocoEnv, utils.EzPickle):
             self.current_lin_vel_x_range = self.lin_vel_x # 使用最大范围
             self.current_ang_vel_z_range = self.ang_vel_z # 使用最大范围
             self.command_step = 200
+            self.max_r_vel = 0.1
         else:
             if self.curriculum_stage == 0:
                 self.current_lin_vel_x_range = [-0.3, 0.3]
                 self.current_ang_vel_z_range = [-0.2, 0.2]
                 self.command_step = 500
+                self.max_r_vel = 0.4
             elif self.curriculum_stage == 1:
                 self.current_lin_vel_x_range = [-0.6, 0.6]
                 self.current_ang_vel_z_range = [-0.4, 0.4]
                 self.command_step = 400
+                self.max_r_vel = 0.3
             elif self.curriculum_stage == 2:
                 self.current_lin_vel_x_range = [-0.9, 0.9]
                 self.current_ang_vel_z_range = [-0.6, 0.6]
                 self.command_step = 200
+                self.max_r_vel = 0.2
             elif self.curriculum_stage >= self.max_curriculum_stage: # 最高阶段
                 self.current_lin_vel_x_range = self.lin_vel_x # 使用最大范围
                 self.current_ang_vel_z_range = self.ang_vel_z # 使用最大范围
                 self.command_step = 200
+                self.max_r_vel = 0.2
 
     # 执行仿真中的一步
     def step(self, action):
@@ -253,16 +259,17 @@ class BipedEnv(mujoco_env.MujocoEnv, utils.EzPickle):
         rewards_info['r_vel_z'] = self._reward_lin_vel_z().cpu()*0.2
         rewards_info['r_ang_xy'] = self._reward_ang_vel_xy().cpu()*0.2
         rewards_info['r_torque'] = self._reward_torque().cpu()*0.3
-        rewards_info['r_gravity'] = self._reward_gravity().cpu()*0.4
-        rewards_info['r_similar_legged'] = self._reward_similar_legged().cpu()*0.2
-        rewards_info['r_stand'] = self._reward_nominal_state().cpu()*0.08
+        rewards_info['r_gravity'] = self._reward_gravity().cpu()*0.5
+        rewards_info['r_similar_legged'] = self._reward_similar_legged().cpu()*0.4
+        rewards_info['r_stand'] = self._reward_nominal_state().cpu()*0.05
         rewards_info['r_height'] = self._reward_base_height().cpu()*0.1
         rewards_info['r_energy'] = self._reward_energy().cpu()*0.2
         rewards_info['r_elur'] = self._reward_base_ang_xy().cpu()*0.5
-        rewards_info['r_smooth'] = self._reward_action_smoothness().cpu()*0.2
-        rewards_info['r_wheel_contect'] = self._reward_wheel_contact().cpu()*0.3
+        # rewards_info['r_smooth'] = self._reward_action_smoothness().cpu()*0.1
+        rewards_info['r_wheel_contect'] = self._reward_wheel_contact().cpu()*0.2
         rewards_info['r_ang_vel_enhance'] = self._reward_ang_vel_enhance().cpu()*r_vel_weight
-        rewards_info['r_healthy'] = self.healthy_reward*0.6
+        rewards_info['r_lin_vel_enhance'] = self._reward_lin_vel_enhance().cpu()*r_vel_weight
+        rewards_info['r_healthy'] = self.healthy_reward*0.8
         
         reward = sum(rewards_info.values()) # 计算总奖励
         done = self.done                        # 只要没死亡就可以一直仿真
@@ -379,15 +386,15 @@ class BipedEnv(mujoco_env.MujocoEnv, utils.EzPickle):
         r = torch.square(pitch) + torch.square(roll)
         return torch.exp(-r)
     # 奖励动作连续
-    def _reward_action_smoothness(self):
-        current_action_tensor = torch.from_numpy(self.action.astype(np.float32)).to(self.device)
-        if hasattr(self, 'last_action'):
-            action_diff = torch.mean(torch.abs(current_action_tensor - self.last_action))
-            self.last_action = current_action_tensor.clone()
-            return torch.exp(-5*action_diff)
-        else:
-            self.last_action = current_action_tensor.clone()
-            return torch.tensor(1.0)
+    # def _reward_action_smoothness(self):
+    #     current_action_tensor = torch.from_numpy(self.action.astype(np.float32)).to(self.device)
+    #     if hasattr(self, 'last_action'):
+    #         action_diff = torch.mean(torch.abs(current_action_tensor - self.last_action))
+    #         self.last_action = current_action_tensor.clone()
+    #         return torch.exp(-5*action_diff)
+    #     else:
+    #         self.last_action = current_action_tensor.clone()
+    #         return torch.tensor(1.0)
         
     def _reward_wheel_contact(self):
         contact_status = self.wheel_contact()
@@ -396,7 +403,14 @@ class BipedEnv(mujoco_env.MujocoEnv, utils.EzPickle):
     
     def _reward_ang_vel_enhance(self):
         ang_vel_error_abs = abs(self.gyro_agent[2] - self.commands[1])
-        if ang_vel_error_abs > 0.2:
+        if ang_vel_error_abs > self.max_r_vel:
             return -0.3*ang_vel_error_abs
         else:
-            return torch.exp(-1.2*ang_vel_error_abs)
+            return torch.exp(-2.0*ang_vel_error_abs)
+    
+    def _reward_lin_vel_enhance(self):
+        lin_vel_error_abs = abs(self.lin_vel_agent_local - self.commands[0])
+        if lin_vel_error_abs > self.max_r_vel:
+            return -0.3*lin_vel_error_abs
+        else:
+            return torch.exp(-2.0*lin_vel_error_abs)
